@@ -200,3 +200,40 @@ def test_tcp_transport(keypair):
     client = CaptureClient(host="127.0.0.1", port=port)
     cap = client.capture(["true"])
     assert cap.is_valid(public_key=pub)
+
+
+def test_malformed_request_does_not_kill_server(service_thread):
+    """A bad client frame must be answered with an error, not crash the loop."""
+    sock, pub = service_thread
+    import socket as _s
+    import struct as _st
+    raw = _s.socket(_s.AF_UNIX, _s.SOCK_STREAM)
+    raw.connect(sock)
+    raw.sendall(_st.pack("!I", 4) + b"nope")
+    resp = raw.recv(4096)
+    raw.close()
+    assert b"error" in resp
+    client = CaptureClient(sock_path=sock)
+    cap = client.capture(["true"])
+    assert cap.is_valid(public_key=pub)
+
+
+def test_run_service_entrypoint(tmp_path):
+    """run_service() generates keys if absent and serves a request."""
+    import os as _os
+    import threading as _th
+    import time as _t
+
+    from provenance_gate_signer import service as _svc
+    sock = str(tmp_path / "rs.sock")
+    t = _th.Thread(target=_svc.run_service, args=(sock,), daemon=True)
+    t.start()
+    for _ in range(100):
+        if _os.path.exists(sock):
+            break
+        _t.sleep(0.01)
+    else:
+        raise RuntimeError("run_service socket never appeared")
+    client = CaptureClient(sock_path=sock)
+    cap = client.capture(["true"])
+    assert cap.is_valid(public_key=cap.pubkey)

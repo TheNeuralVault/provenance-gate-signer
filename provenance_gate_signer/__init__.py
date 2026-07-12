@@ -25,10 +25,10 @@ Design invariants:
 """
 
 from .client import AttestedCapture, CaptureClient, ServiceVerifier
-from .keys import generate_keypair, public_key_bytes
+from .keys import generate_keypair
 from .service import SigningService, run_service
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AttestedCapture",
@@ -36,6 +36,5 @@ __all__ = [
     "ServiceVerifier",
     "SigningService",
     "generate_keypair",
-    "public_key_bytes",
     "run_service",
 ]

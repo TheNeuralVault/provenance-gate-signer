@@ -109,16 +109,6 @@ def _os_random(n: int) -> bytes:
     return os.urandom(n)
 
 
-def public_key_bytes(priv: bytes) -> bytes:
-    """Derive the public key bytes from a 32-byte private seed."""
-    h = _sha512(priv)
-    a = int.from_bytes(h[:32], "little")
-    a &= (1 << 254) - 8
-    a |= 1 << 254
-    A = _scalarmult(_G, a)
-    return _encode_point(A)
-
-
 def sign(priv: bytes, msg: bytes) -> str:
     """Sign msg with the 32-byte private seed; return base64 signature."""
     h = _sha512(priv)
