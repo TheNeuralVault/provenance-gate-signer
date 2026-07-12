@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "provenance-gate-signer"
+version = "0.1.0"
+description = "Out-of-process Ed25519 signing extension that closes provenance-gate's in-process adversary gap"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "NeuralVault Contributors"}]
+readme = "README.md"
+dependencies = [
+    "provenance-gate>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["provenance_gate_signer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=provenance_gate_signer --cov-report=term-missing --cov-fail-under=90"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["provenance_gate_signer"]
+exclude = "tests"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["SIM300", "B011"]
