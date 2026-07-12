@@ -237,3 +237,51 @@ def test_run_service_entrypoint(tmp_path):
     client = CaptureClient(sock_path=sock)
     cap = client.capture(["true"])
     assert cap.is_valid(public_key=cap.pubkey)
+
+
+EXACT_HOST, EXACT_PORT = "127.0.0.1", 8731
+
+
+def test_exact_endpoint_subprocess():
+    """The real run_endpoint.py as a separate process on 127.0.0.1:8731.
+
+    Locks the published endpoint contract: a standalone signing service
+    process (holding the private key) serves an agent client that only ever
+    holds the public key. Catches any break in the two-process deployment
+    shape, not just in-thread serve_once.
+    """
+    import os as _os
+    import socket as _s
+    import subprocess as _sp
+    import sys as _sys
+    import time as _t
+
+    here = _os.path.dirname(_os.path.dirname(_os.path.dirname(
+        _os.path.abspath(__file__))))
+    ep = _os.path.join(here, "run_endpoint.py")
+    proc = _sp.Popen([_sys.executable, ep],
+                     stdout=_sp.PIPE, stderr=_sp.STDOUT)
+    try:
+        for _ in range(100):
+            try:
+                c = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+                c.settimeout(0.2)
+                c.connect((EXACT_HOST, EXACT_PORT))
+                c.close()
+                break
+            except OSError:
+                _t.sleep(0.05)
+        else:
+            raise RuntimeError("exact endpoint never came up")
+        client = CaptureClient(host=EXACT_HOST, port=EXACT_PORT)
+        cap = client.capture(["python", "-c", "print('attested via exact endpoint')"])
+        assert cap.exit_code == 0
+        assert cap.is_valid(public_key=cap.pubkey)
+        art = cap.to_t1_artifact()
+        assert art.tier.name == "T1"
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
