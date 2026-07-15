@@ -22,13 +22,17 @@ import os
 import random
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
+
+try:
+    from hypothesis import given
+    from hypothesis import strategies as st
+
+    _HAVE_HYPOTHESIS = True
+except ImportError:  # pragma: no cover - fallback fuzz path
+    _HAVE_HYPOTHESIS = False
 
 from provenance_gate_signer import generate_keypair
 from provenance_gate_signer.keys import sign, verify
-
-_HAVE_HYPOTHESIS = True
 
 
 def _flip_byte(data: bytes) -> bytes:
