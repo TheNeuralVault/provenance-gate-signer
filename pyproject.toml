@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "provenance-gate-signer"
-version = "0.1.4"
+version = "0.1.5"
 description = "Out-of-process Ed25519 signing extension that closes provenance-gate's in-process adversary gap"
 requires-python = ">=3.10"
 license = "MIT"

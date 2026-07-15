@@ -28,7 +28,7 @@ from .client import AttestedCapture, CaptureClient, ServiceVerifier
 from .keys import generate_keypair
 from .service import SigningService, run_service
 
-__version__ = "0.1.2"
+__version__ = "0.1.5"
 
 __all__ = [
     "AttestedCapture",
