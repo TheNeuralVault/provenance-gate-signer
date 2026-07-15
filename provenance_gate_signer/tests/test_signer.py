@@ -9,7 +9,6 @@ to a real SigningService process, real subprocess execution, and assert that:
 
 from __future__ import annotations
 
-import os
 import threading
 
 import pytest
@@ -30,23 +29,23 @@ def keypair():
 
 
 @pytest.fixture
-def service_thread(tmp_path, keypair):
+def service_thread(short_sock, keypair):
     """Spin up a real SigningService on a UNIX socket in a background thread."""
-    import time
-
     priv, pub = keypair
-    sock = str(tmp_path / "sign.sock")
+    sock = short_sock
     svc = SigningService(priv, pub)
     t = threading.Thread(target=svc.serve_path, args=(sock,), daemon=True)
     t.start()
-    # wait until the socket actually exists (avoid connect-before-bind race)
-    for _ in range(100):
-        if os.path.exists(sock):
-            break
-        time.sleep(0.01)
-    else:
+    # Wait for the server to be genuinely listening. serve_path sets _ready
+    # after bind()+listen(); polling the file alone races bind() vs listen()
+    # and is OS-dependent (macOS startup lag). No accept is consumed.
+    if not svc._ready.wait(timeout=5):
         raise RuntimeError("signing service socket never appeared: " + sock)
-    return sock, pub
+    try:
+        yield sock, pub
+    finally:
+        svc.shutdown()
+        t.join(timeout=2)
 
 
 # --------------------------------------------------------------------------
@@ -197,9 +196,25 @@ def test_tcp_transport(keypair):
     s.close()
     t = threading.Thread(target=svc.serve_tcp, args=("127.0.0.1", port), daemon=True)
     t.start()
-    client = CaptureClient(host="127.0.0.1", port=port)
-    cap = client.capture(["true"])
-    assert cap.is_valid(public_key=pub)
+    # Wait until the server is actually listening (avoids connect-before-listen race).
+    import time
+
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.connect(("127.0.0.1", port))
+            probe.close()
+            break
+        except OSError:
+            time.sleep(0.02)
+    try:
+        client = CaptureClient(host="127.0.0.1", port=port)
+        cap = client.capture(["true"])
+        assert cap.is_valid(public_key=pub)
+    finally:
+        svc.shutdown()
+        t.join(timeout=2)
 
 
 def test_malformed_request_does_not_kill_server(service_thread):
@@ -218,25 +233,45 @@ def test_malformed_request_does_not_kill_server(service_thread):
     assert cap.is_valid(public_key=pub)
 
 
-def test_run_service_entrypoint(tmp_path):
-    """run_service() generates keys if absent and serves a request."""
-    import os as _os
-    import threading as _th
-    import time as _t
+def test_run_service_entrypoint(short_sock):
+    """run_service() serves a request end-to-end and can be stopped cleanly.
 
+    run_service() serves in its own background thread and returns the instance,
+    so we just wait for readiness and capture.
+    """
     from provenance_gate_signer import service as _svc
-    sock = str(tmp_path / "rs.sock")
-    t = _th.Thread(target=_svc.run_service, args=(sock,), daemon=True)
-    t.start()
-    for _ in range(100):
-        if _os.path.exists(sock):
-            break
-        _t.sleep(0.01)
-    else:
+    sock = short_sock
+    svc = _svc.run_service(sock)  # type: ignore[call-arg]
+    if not svc._ready.wait(timeout=5):
         raise RuntimeError("run_service socket never appeared")
-    client = CaptureClient(sock_path=sock)
-    cap = client.capture(["true"])
-    assert cap.is_valid(public_key=cap.pubkey)
+    try:
+        client = CaptureClient(sock_path=sock)
+        cap = client.capture(["true"])
+        assert cap.is_valid(public_key=cap.pubkey)
+    finally:
+        svc.shutdown()
+
+
+def test_run_service_generates_keys_when_absent(short_sock):
+    """run_service() keygen fallback: with no keys supplied it generates a
+    valid Ed25519 keypair and serves real signed captures.
+
+    run_service() now serves in its own background thread and returns the
+    instance, so we simply wait for readiness and then capture.
+    """
+    from provenance_gate_signer import service as _svc
+    sock = short_sock
+    svc = _svc.run_service(sock)  # no keys -> generate_keypair() branch
+    if not svc._ready.wait(timeout=5):
+        raise RuntimeError("run_service socket never appeared")
+    try:
+        client = CaptureClient(sock_path=sock)
+        cap = client.capture(["python", "-c", "print('keygen path')"])
+        # The generated key must actually verify its own signature.
+        assert cap.is_valid(public_key=cap.pubkey)
+        assert "keygen path" in cap.content
+    finally:
+        svc.shutdown()
 
 
 EXACT_HOST, EXACT_PORT = "127.0.0.1", 8731

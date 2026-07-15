@@ -19,7 +19,8 @@ import json
 import os
 import socket
 import struct
-import subprocess
+import subprocess  # nosec B404 -- deliberate out-of-process capture/signing contract
+import threading
 from typing import Any, cast
 
 from .keys import sign
@@ -31,6 +32,16 @@ class SigningService:
     def __init__(self, private_key: bytes, public_key: bytes) -> None:
         self._priv = private_key
         self._pub = public_key
+        # Controllable shutdown so the (otherwise infinite) serve loops can be
+        # stopped cleanly in tests and production — without leaking threads.
+        self._stop = threading.Event()
+        # Set once the socket is bound AND listening, so clients/tests can wait
+        # for genuine readiness instead of racing bind() vs listen().
+        self._ready = threading.Event()
+
+    def shutdown(self) -> None:
+        """Signal the serve loop to exit at the next accept timeout."""
+        self._stop.set()
 
     @property
     def public_key(self) -> bytes:
@@ -84,9 +95,14 @@ class SigningService:
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(sock_path)
         srv.listen(max_clients)
+        self._ready.set()
         try:
-            while True:
-                conn, _ = srv.accept()
+            while not self._stop.is_set():
+                srv.settimeout(0.2)
+                try:
+                    conn, _ = srv.accept()
+                except TimeoutError:
+                    continue
                 with conn:
                     try:
                         self.serve_once(conn)
@@ -103,8 +119,12 @@ class SigningService:
         srv.bind((host, port))
         srv.listen(max_clients)
         try:
-            while True:
-                conn, _ = srv.accept()
+            while not self._stop.is_set():
+                srv.settimeout(0.2)
+                try:
+                    conn, _ = srv.accept()
+                except TimeoutError:
+                    continue
                 with conn:
                     try:
                         self.serve_once(conn)
@@ -138,10 +158,19 @@ def _send_json(conn: socket.socket, obj: dict[str, Any]) -> None:
 
 
 def run_service(sock_path: str, *, private_key: bytes | None = None,
-                public_key: bytes | None = None) -> None:
-    """Convenience entry point: generate keys (or use supplied) and serve."""
+                public_key: bytes | None = None) -> SigningService:
+    """Convenience entry point: generate keys (or use supplied) and serve.
+
+    Returns the running SigningService (serving in a background thread) so
+    callers can stop it cleanly via ``svc.shutdown()``. As a process entry
+    point the caller typically just lets the thread run until termination.
+    """
     from .keys import generate_keypair
 
     if private_key is None or public_key is None:
         private_key, public_key = generate_keypair()
-    SigningService(private_key, public_key).serve_path(sock_path)
+    svc = SigningService(private_key, public_key)
+    import threading
+
+    threading.Thread(target=svc.serve_path, args=(sock_path,), daemon=True).start()
+    return svc
